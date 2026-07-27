@@ -1,99 +1,116 @@
+@import url('https://api.fontshare.com/v2/css?f[]=switzer@400,500,600,700,800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap');
+
 :root{
-  --paper:#f7f6f2; --ink:#141414; --line:#dedad0;
-  --teal:#2f6b63; --rust:#c1502f; --muted:#8a8577;
+  --canvas:#fafaf9; --surface:#ffffff; --border:#d8d8d8;
+  --ink:#0b0b0c; --fg:#3f4144; --muted:#696c71; --subtle:#94969a;
+  --accent:#2f737c; --accent-active:#1e4e54; --danger:#c2424b;
 }
 *{box-sizing:border-box;}
 body{
   margin:0;
   background:
-    linear-gradient(var(--line) 1px, transparent 1px) 0 0/40px 40px,
-    linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/40px 40px,
-    var(--paper);
-  color:var(--ink);
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+    linear-gradient(rgba(11,11,12,.07) 1px, transparent 1px) 0 0/96px 96px,
+    linear-gradient(90deg, rgba(11,11,12,.07) 1px, transparent 1px) 0 0/96px 96px,
+    var(--canvas);
+  color:var(--fg);
+  font-family:'Switzer',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
   min-height:100vh;
 }
-.mono{font-family:'SF Mono','Courier New',monospace;}
+.mono{font-family:'JetBrains Mono','SF Mono','Courier New',monospace;}
 
 header{
   display:flex; align-items:center; gap:14px; padding:20px 40px;
-  border-bottom:1px solid var(--ink); background:rgba(247,246,242,.92);
+  border-bottom:1px solid var(--border); background:rgba(250,249,249,.92);
   position:sticky; top:0; z-index:10;
 }
 .logo-mark{display:flex; align-items:baseline; gap:.6em;}
 .logo{
-  font-weight:800; font-size:19px; letter-spacing:-.03em;
+  font-weight:800; font-size:24px; letter-spacing:-.025em;
   background:linear-gradient(90deg,#4F7629,#2F737C,#6178B9,#7E5AA6,#C2424B);
   -webkit-background-clip:text; background-clip:text; color:transparent;
 }
-.logo-sub{font-size:11px; color:var(--muted); letter-spacing:1px;}
+.logo-sub{font-size:.72rem; color:var(--muted); letter-spacing:.12em; font-weight:400;}
 .backbtn{
-  margin-left:auto; background:none; border:1px solid var(--ink); color:var(--ink);
-  padding:8px 14px; font-size:11.5px; letter-spacing:.5px; cursor:pointer;
-  text-transform:uppercase;
+  margin-left:auto; background:none; border:1px solid var(--border); color:var(--fg);
+  padding:8px 14px; font-size:.72rem; letter-spacing:.12em; cursor:pointer;
+  text-transform:uppercase; font-weight:500;
 }
-.backbtn:hover{background:var(--ink); color:var(--paper);}
+.backbtn:hover{background:var(--ink); color:var(--canvas); border-color:var(--ink);}
 
 main{max-width:900px; margin:0 auto; padding:56px 40px 100px;}
 
 .tag{
-  display:inline-block; font-size:11px; letter-spacing:1.5px; color:var(--muted);
-  border:1px solid var(--line); background:#fff; padding:4px 10px; margin-bottom:22px;
+  display:inline-block; font-size:.72rem; letter-spacing:.12em; color:var(--muted);
+  border:1px solid var(--border); background:var(--surface); padding:4px 10px; margin-bottom:22px;
+  text-transform:uppercase;
 }
-h1{font-size:34px; font-weight:800; margin:0 0 8px; letter-spacing:-.5px;}
-.lede{color:var(--muted); font-size:15px; margin:0 0 38px; max-width:520px;}
+h1{font-size:2.25rem; line-height:2.625rem; font-weight:700; margin:0 0 8px; letter-spacing:-.015em; color:var(--ink);}
+.lede{color:var(--muted); font-size:.9375rem; line-height:1.5rem; margin:0 0 38px; max-width:520px;}
 
 .grid{display:grid; grid-template-columns:1fr 1fr; gap:18px;}
 .buildcard{
-  background:#fff; border:1px solid var(--ink); padding:26px 24px; cursor:pointer;
-  position:relative; transition:transform .12s ease;
+  position:relative;
+  background:var(--surface); border:1px solid var(--border); padding:26px 24px; cursor:pointer;
+  transition:border-color .2s ease;
 }
-.buildcard:hover{transform:translate(-2px,-2px); box-shadow:4px 4px 0 var(--ink);}
-.buildcard .bar{height:3px; width:38px; background:linear-gradient(90deg,var(--teal),var(--rust)); margin-bottom:16px;}
-.buildcard h3{margin:0 0 8px; font-size:19px; font-weight:800;}
-.buildcard p{margin:0; font-size:13.5px; color:var(--muted); line-height:1.5;}
+.buildcard:before{
+  content:""; position:absolute; top:-1px; left:-1px; width:14px; height:14px;
+  border-top:2px solid var(--ink); border-left:2px solid var(--ink);
+  opacity:0; transition:opacity .2s ease; pointer-events:none;
+}
+.buildcard:hover{border-color:var(--ink);}
+.buildcard:hover:before{opacity:.85;}
+.buildcard .bar{height:3px; width:38px; background:var(--accent); margin-bottom:16px;}
+.buildcard h3{margin:0 0 8px; font-size:1.25rem; font-weight:600; color:var(--ink);}
+.buildcard p{margin:0; font-size:.8125rem; color:var(--muted); line-height:1.25rem;}
 .buildcard.disabled{opacity:.4; cursor:not-allowed;}
-.buildcard.disabled:hover{transform:none; box-shadow:none;}
-.buildcard .arrow{position:absolute; top:24px; right:22px; font-size:18px;}
+.buildcard.disabled:hover{border-color:var(--border);}
+.buildcard.disabled:hover:before{opacity:0;}
+.buildcard .arrow{position:absolute; top:24px; right:22px; font-size:18px; color:var(--muted);}
 
 .field{margin-bottom:22px;}
 .field label{
-  display:block; font-size:11px; text-transform:uppercase; letter-spacing:1px;
-  color:var(--teal); margin-bottom:7px; font-weight:700;
+  display:block; font-size:.8125rem; font-weight:500;
+  color:var(--fg); margin-bottom:7px;
 }
-.field input{
-  width:100%; padding:12px 13px; font-size:15px; font-family:inherit;
-  border:1px solid var(--line); background:#fff; color:var(--ink);
+.field input, .field select{
+  width:100%; padding:10px 16px; font-size:.9375rem; font-family:inherit;
+  border:1px solid var(--border); background:var(--surface); color:var(--ink);
 }
-.field input:focus{outline:none; border-color:var(--teal);}
+.field input::placeholder{color:var(--subtle);}
+.field input:focus, .field select:focus{outline:none; border-color:var(--accent);}
 .row2{display:grid; grid-template-columns:1fr 1fr; gap:20px;}
 
 .idcard{
-  display:flex; gap:16px; align-items:center; background:#fff;
-  border:1px dashed var(--muted); padding:16px 18px; margin-bottom:34px;
+  display:flex; gap:16px; align-items:center; background:var(--surface);
+  border:1px dashed var(--border); padding:16px 18px; margin-bottom:34px;
 }
 .idcard .ico{font-size:20px;}
 .idcard .txt{flex:1;}
-.idcard .txt b{font-size:14px;}
-.idcard .txt span{display:block; font-size:12px; color:var(--muted); margin-top:2px;}
+.idcard .txt b{font-size:.875rem; color:var(--ink);}
+.idcard .txt span{display:block; font-size:.8125rem; color:var(--muted); margin-top:2px;}
 .idcard input[type=file]{display:none;}
 .btn-outline{
-  border:1px solid var(--ink); background:transparent; color:var(--ink);
-  padding:9px 15px; font-size:12px; letter-spacing:.5px; text-transform:uppercase;
+  border:1px solid var(--border); background:transparent; color:var(--ink);
+  padding:9px 15px; font-size:.72rem; letter-spacing:.12em; text-transform:uppercase;
+  font-family:'JetBrains Mono','SF Mono',monospace; font-weight:500;
   cursor:pointer; white-space:nowrap;
 }
-.btn-outline:hover{background:var(--ink); color:var(--paper);}
+.btn-outline:hover{background:var(--ink); color:var(--canvas); border-color:var(--ink);}
 
 .generate-bar{
   display:flex; align-items:center; gap:16px; margin-top:30px; padding-top:24px;
-  border-top:1px solid var(--ink);
+  border-top:1px solid var(--border);
 }
 .btn-solid{
-  background:var(--ink); color:var(--paper); border:none; padding:14px 28px;
-  font-size:13px; letter-spacing:.8px; text-transform:uppercase; cursor:pointer;
+  background:var(--ink); color:#fff; border:none; padding:.95em 1.6em;
+  font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; cursor:pointer;
+  font-family:'JetBrains Mono','SF Mono',monospace; font-weight:500;
 }
-.btn-solid:hover{background:var(--rust);}
+.btn-solid:hover{background:var(--accent);}
+.btn-solid:active{background:var(--accent-active);}
 .btn-solid:disabled{opacity:.5; cursor:default;}
-.status{font-size:12.5px; color:var(--muted);}
-.status.ok{color:var(--teal); font-weight:600;}
-.status.err{color:var(--rust); font-weight:600;}
+.status{font-size:.8125rem; color:var(--muted);}
+.status.ok{color:var(--accent); font-weight:600;}
+.status.err{color:var(--danger); font-weight:600;}
