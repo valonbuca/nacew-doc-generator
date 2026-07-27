@@ -37,6 +37,7 @@ export default function DocForm({ docKey }) {
   const [paymentType, setPaymentType] = useState("project"); // service contract only
   const [status, setStatus] = useState({ text: "", kind: "" });
   const [busy, setBusy] = useState(false);
+  const [invalidFields, setInvalidFields] = useState([]);
 
   useEffect(() => {
     (async () => {
@@ -81,8 +82,37 @@ export default function DocForm({ docKey }) {
   const dateTokens = visibleTokens.filter(isDateField);
   const otherTokens = visibleTokens.filter((tok) => !isDateField(tok));
 
+  // Fields that must be non-empty before generating. Mirrors what's actually
+  // rendered below: every visible text/date field, minus the salary/fee
+  // "words" siblings (auto-derived from the amount field, never required on
+  // their own), plus whichever payment-variant field(s) are shown for the
+  // currently selected paymentType.
+  const paymentVariantRequired = !t.hasPaymentVariant
+    ? []
+    : paymentType === "project"
+    ? ["fee_amount"]
+    : paymentType === "hourly"
+    ? ["hourly_rate"]
+    : paymentType === "monthly"
+    ? ["monthly_fee", "hourly_rate"]
+    : ["monthly_fee"]; // monthlyOnly
+  const requiredTokens = [
+    ...otherTokens.filter((tok) => tok !== "salary_words" && tok !== "fee_words"),
+    ...dateTokens,
+    ...paymentVariantRequired,
+  ];
+
+  function fieldDisplayName(tok) {
+    if (tok === "salary_amount") return "Salary (EUR)";
+    if (tok === "fee_amount") return "Fee (EUR)";
+    if (tok === "monthly_fee") return "Monthly fee (EUR)";
+    if (tok === "hourly_rate") return "Hourly rate (EUR)";
+    return labelize(tok);
+  }
+
   function setField(tok, val) {
     setValues((v) => ({ ...v, [tok]: val }));
+    setInvalidFields((inv) => inv.filter((f) => f !== tok));
   }
 
   function applyExtractedFields(parsed) {
@@ -104,6 +134,7 @@ export default function DocForm({ docKey }) {
       [amountKey]: digits ? `${digits}€` : "",
       [wordsKey]: digits ? numberToAlbanianWords(digits) : "",
     }));
+    if (digits) setInvalidFields((inv) => inv.filter((f) => f !== amountKey));
   }
 
   // One upload widget, driven by DOC_TYPES[key].sourceUpload — reads an ID
@@ -128,6 +159,14 @@ export default function DocForm({ docKey }) {
   }
 
   async function handleGenerate() {
+    const missing = requiredTokens.filter((tok) => !values[tok] || !String(values[tok]).trim());
+    if (missing.length > 0) {
+      setInvalidFields(missing);
+      setStatus({ text: `Please fill in: ${missing.map(fieldDisplayName).join(", ")}`, kind: "err" });
+      return;
+    }
+    setInvalidFields([]);
+
     setBusy(true);
     try {
       let blob;
@@ -191,8 +230,10 @@ export default function DocForm({ docKey }) {
       {otherTokens.map((tok) => {
         if (tok === "salary_amount") {
           return (
-            <div className="field" key={tok}>
-              <label>Salary (EUR)</label>
+            <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
+              <label>
+                Salary (EUR) <span className="required-mark">*</span>
+              </label>
               <input
                 type="text"
                 value={(values.salary_amount || "").replace("€", "")}
@@ -216,8 +257,10 @@ export default function DocForm({ docKey }) {
           );
         }
         return (
-          <div className="field" key={tok}>
-            <label>{labelize(tok)}</label>
+          <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
+            <label>
+              {labelize(tok)} <span className="required-mark">*</span>
+            </label>
             <input
               type="text"
               value={values[tok] || ""}
@@ -242,8 +285,10 @@ export default function DocForm({ docKey }) {
 
           {paymentType === "project" && (
             <>
-              <div className="field">
-                <label>Fee (EUR)</label>
+              <div className={`field${invalidFields.includes("fee_amount") ? " invalid" : ""}`}>
+                <label>
+                  Fee (EUR) <span className="required-mark">*</span>
+                </label>
                 <input
                   type="text"
                   value={(values.fee_amount || "").replace("€", "")}
@@ -264,8 +309,10 @@ export default function DocForm({ docKey }) {
           )}
 
           {(paymentType === "monthlyOnly" || paymentType === "monthly") && (
-            <div className="field">
-              <label>Monthly fee (EUR)</label>
+            <div className={`field${invalidFields.includes("monthly_fee") ? " invalid" : ""}`}>
+              <label>
+                Monthly fee (EUR) <span className="required-mark">*</span>
+              </label>
               <input
                 type="text"
                 value={values.monthly_fee || ""}
@@ -276,8 +323,10 @@ export default function DocForm({ docKey }) {
           )}
 
           {(paymentType === "hourly" || paymentType === "monthly") && (
-            <div className="field">
-              <label>Hourly rate (EUR)</label>
+            <div className={`field${invalidFields.includes("hourly_rate") ? " invalid" : ""}`}>
+              <label>
+                Hourly rate (EUR) <span className="required-mark">*</span>
+              </label>
               <input
                 type="text"
                 value={values.hourly_rate || ""}
@@ -303,12 +352,13 @@ export default function DocForm({ docKey }) {
 
       <div className="row2">
         {dateTokens.map((tok) => (
-          <div className="field" key={tok}>
+          <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
             <label>
               {labelize(tok)}
               {tok === "today_date" ? " (auto)" : ""}
               {tok === "contract_date" && docKey === "contract" ? " (auto)" : ""}
-              {tok === "contract_date" && docKey === "nda" ? " (from uploaded contract)" : ""}
+              {tok === "contract_date" && docKey === "nda" ? " (from uploaded contract)" : ""}{" "}
+              <span className="required-mark">*</span>
             </label>
             <input
               type="text"

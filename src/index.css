@@ -74,12 +74,14 @@ h1{font-size:2.25rem; line-height:2.625rem; font-weight:700; margin:0 0 8px; let
   display:block; font-size:.8125rem; font-weight:500;
   color:var(--fg); margin-bottom:7px;
 }
+.required-mark{color:var(--danger); font-size:.75em; font-weight:600; margin-left:1px;}
 .field input, .field select{
   width:100%; padding:10px 16px; font-size:.9375rem; font-family:inherit;
   border:1px solid var(--border); background:var(--surface); color:var(--ink);
 }
 .field input::placeholder{color:var(--subtle);}
 .field input:focus, .field select:focus{outline:none; border-color:var(--accent);}
+.field.invalid input, .field.invalid select{border-color:var(--danger);}
 .row2{display:grid; grid-template-columns:1fr 1fr; gap:20px;}
 
 .idcard{
