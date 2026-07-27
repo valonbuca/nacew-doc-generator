@@ -8,9 +8,9 @@ export default function App() {
   return (
     <>
       <header>
-        <div>
-          <div className="logo">NACEW · OS</div>
-          <div className="logo-sub mono">DOCUMENT GENERATOR</div>
+        <div className="logo-mark">
+          <span className="logo">NACEW</span>
+          <span className="logo-sub mono">DOCUMENT GENERATOR</span>
         </div>
         {activeKey && (
           <button className="backbtn mono" onClick={() => setActiveKey(null)}>

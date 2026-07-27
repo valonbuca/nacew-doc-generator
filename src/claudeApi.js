@@ -1,4 +1,4 @@
-﻿import JSZip from "jszip";
+import JSZip from "jszip";
 
 // NOTE: This calls the Anthropic API directly from the browser using an API key
 // baked into the client bundle. That is fine for local testing on your own
@@ -158,7 +158,9 @@ Respond ONLY with raw JSON, no markdown fences: {"employee_name":"","birth_date"
 // ---------------------------------------------------------------------------
 
 export async function generateJobDuties(position) {
-  const prompt = `Write 6 to 9 professional job duties in Albanian for the position "${position}", for insertion into Neni 3 of a formal Kosovo employment contract (Ewwwolution/Nacew house style).
+  const prompt = `Write no more than 5 professional job duties (could be fewer for simple roles, but never more than 5) in Albanian for the position "${position}", for insertion into Neni 3 of a formal Kosovo employment contract (Ewwwolution/Nacew house style).
+
+Keep each duty to a single short sentence, ideally under 15 words. Avoid compound duties joined with "and" or commas that pack multiple responsibilities into one bullet.
 
 Match this tone and specificity — for reference, here's what was written for a UI/UX Designer:
 "Ridizajnimi i UI/UX i platformës ekzistuese dhe veçorive të reja për web & mobil"

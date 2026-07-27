@@ -20,7 +20,12 @@ header{
   border-bottom:1px solid var(--ink); background:rgba(247,246,242,.92);
   position:sticky; top:0; z-index:10;
 }
-.logo{font-weight:800; font-size:19px; letter-spacing:-.5px;}
+.logo-mark{display:flex; align-items:baseline; gap:.6em;}
+.logo{
+  font-weight:800; font-size:19px; letter-spacing:-.03em;
+  background:linear-gradient(90deg,#4F7629,#2F737C,#6178B9,#7E5AA6,#C2424B);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
 .logo-sub{font-size:11px; color:var(--muted); letter-spacing:1px;}
 .backbtn{
   margin-left:auto; background:none; border:1px solid var(--ink); color:var(--ink);
