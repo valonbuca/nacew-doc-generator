@@ -103,7 +103,7 @@ export async function extractIdCardFromFile(file, nameField = "employee_name") {
         ...contentBlocks,
         {
           type: "text",
-          text: 'This file contains the front and/or back of a Kosovo ID card (may be a PDF or a Word doc with both sides embedded as images). Extract: full name, birth date, personal number ("Numri Personal" — a 10-digit number found on the BACK of the card, not the document number on the front), municipality, and street address. Respond ONLY with raw JSON, no markdown fences: {"employee_name":"","birth_date":"","personal_id":"","municipality":"","street_address":""}. Use empty string for anything not visible or not on the card.',
+          text: 'This file contains the front and/or back of a Kosovo ID card (may be a PDF or a Word doc with both sides embedded as images). Extract: full name, birth date, personal number ("Numri Personal" — a 10-digit number found on the BACK of the card, not the document number on the front), municipality, and street address. For street_address, include the full address exactly as printed on the card, INCLUDING its descriptor (Rruga / Bulevardi / Sheshi / etc.), without repeating the municipality. Respond ONLY with raw JSON, no markdown fences: {"employee_name":"","birth_date":"","personal_id":"","municipality":"","street_address":""}. Use empty string for anything not visible or not on the card.',
         },
       ],
     },
@@ -136,7 +136,7 @@ export async function extractNdaFieldsFromContract(file) {
 - employee_name: the employee's full name
 - birth_date: their birth date if stated ("i lindur më ..."), else empty string
 - municipality: the town/municipality of their residence ("vendbanim në ...")
-- street_address: their street/building address, WITHOUT repeating the municipality and without a leading "Rruga" (I'll add that prefix myself, unless the address is actually a boulevard/square rather than a street, in which case include the full descriptor like "Bulevardi ..." so it isn't wrongly prefixed)
+- street_address: their street/building address exactly as written in the contract, INCLUDING its descriptor (Rruga / Bulevardi / Sheshi / etc.) — the template no longer adds one itself, so it must be present here. Still WITHOUT repeating the municipality.
 - personal_id: their "numër personal të identifikimit" (a 10-digit number)
 - position: their job title ("Pozita")
 - contract_date: the contract's signing date. Contracts usually state this date in two places (near the top, and again next to the signatures at the bottom) and they should match — if one of the two is clearly an invalid or malformed date (e.g. an impossible day/month like "17.17.2026"), use the other, valid one instead and ignore the typo.

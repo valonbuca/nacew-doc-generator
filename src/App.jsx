@@ -8,10 +8,10 @@ export default function App() {
   return (
     <>
       <header>
-        <div className="logo-mark">
+        <button className="logo-mark" onClick={() => setActiveKey(null)}>
           <span className="logo">NACEW</span>
           <span className="logo-sub mono">DOCUMENT GENERATOR</span>
-        </div>
+        </button>
         {activeKey && (
           <button className="backbtn mono" onClick={() => setActiveKey(null)}>
             &larr; back

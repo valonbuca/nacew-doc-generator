@@ -29,8 +29,27 @@ const AUTO_DERIVED_CONTRACT_FIELDS = ["end_date", "probation_start_date", "proba
 // selected payment type instead of through the generic token loop.
 const PAYMENT_VARIANT_TOKENS = ["fee_amount", "fee_words", "monthly_fee", "hourly_rate"];
 
+// Employment Contract -> NDA: both shells were tokenized with identical
+// names for the fields they share, so chaining straight from a generated
+// contract is a plain copy -- no re-extraction, no re-upload.
+const NDA_CHAINED_FIELDS = [
+  "employee_name",
+  "birth_date",
+  "municipality",
+  "street_address",
+  "personal_id",
+  "position",
+  "contract_date",
+];
+
 export default function DocForm({ docKey }) {
-  const t = DOC_TYPES[docKey];
+  // Normally mirrors docKey. Diverges only while reviewing a chained NDA
+  // generated from a just-downloaded Employment Contract (see
+  // handleChainNda) -- everywhere below that reads `t`/`tokens` then
+  // transparently operates on whichever document is actually being
+  // reviewed/generated.
+  const [reviewDocKey, setReviewDocKey] = useState(docKey);
+  const t = DOC_TYPES[reviewDocKey];
   const [tokens, setTokens] = useState([]);
   const [values, setValues] = useState({});
   const [durationMonths, setDurationMonths] = useState(12); // default 1 year, contract only
@@ -38,10 +57,14 @@ export default function DocForm({ docKey }) {
   const [status, setStatus] = useState({ text: "", kind: "" });
   const [busy, setBusy] = useState(false);
   const [invalidFields, setInvalidFields] = useState([]);
+  const [phase, setPhase] = useState("form"); // "form" | "review"
+  const [duties, setDuties] = useState([]);
+  const [reviewValues, setReviewValues] = useState(null); // frozen values shown/used at review time
+  const [contractDownloaded, setContractDownloaded] = useState(false); // Employment Contract only, offers the NDA chain
 
   useEffect(() => {
     (async () => {
-      const toks = await extractTokens(t.shellUrl);
+      const toks = await extractTokens(DOC_TYPES[docKey].shellUrl);
       setTokens(toks);
       const initial = {};
       toks.forEach((tok) => {
@@ -102,6 +125,18 @@ export default function DocForm({ docKey }) {
     ...paymentVariantRequired,
   ];
 
+  // Everything worth eyeballing on the review screen -- the required set,
+  // plus the auto-derived "words" siblings and (for the contract type) the
+  // auto-calculated end/probation dates, since those are real values that
+  // end up in the document even though they're never directly editable.
+  const summaryTokens = [
+    ...otherTokens,
+    ...dateTokens,
+    ...paymentVariantRequired,
+    ...(t.hasPaymentVariant && paymentType === "project" ? ["fee_words"] : []),
+    ...(t.hasDuration ? AUTO_DERIVED_CONTRACT_FIELDS : []),
+  ];
+
   function fieldDisplayName(tok) {
     if (tok === "salary_amount") return "Salary (EUR)";
     if (tok === "fee_amount") return "Fee (EUR)";
@@ -158,7 +193,11 @@ export default function DocForm({ docKey }) {
     }
   }
 
-  async function handleGenerate() {
+  // Phase 1: validate, run the Claude call(s), then hand off to the review
+  // screen instead of writing a file straight away -- these are real legal
+  // documents, so the AI-written duties (and, for the NDA, the auto-extracted
+  // field values) get a human look before anything is committed to a .docx.
+  async function handlePrepareReview() {
     const missing = requiredTokens.filter((tok) => !values[tok] || !String(values[tok]).trim());
     if (missing.length > 0) {
       setInvalidFields(missing);
@@ -169,36 +208,123 @@ export default function DocForm({ docKey }) {
 
     setBusy(true);
     try {
-      let blob;
-      let mergedForFilename = values;
-
       if (t.hasJobDuties) {
         setStatus({ text: "Generating job duties for this position...", kind: "" });
-        const duties = await generateJobDuties(values.position || "");
-        setStatus({ text: "Writing document...", kind: "" });
-        blob = await generateContractDocx(
-          t.shellUrl,
-          tokens,
-          values,
-          duties,
-          t.dutyMarker || "job_duty_1",
-          t.hasPaymentVariant ? paymentType : null
-        );
+        const generated = await generateJobDuties(values.position || "");
+        setDuties(generated);
+        setReviewValues(values);
       } else {
         setStatus({ text: "Asking Claude to format the fields...", kind: "" });
         const formatted = await smartFormatValues(values);
-        mergedForFilename = { ...values, ...formatted };
-        setStatus({ text: "Writing document...", kind: "" });
-        blob = await generateDocx(t.shellUrl, tokens, mergedForFilename);
+        setReviewValues({ ...values, ...formatted });
       }
+      setStatus({ text: "Review below, then confirm to write the document.", kind: "ok" });
+      setPhase("review");
+    } catch (err) {
+      console.error(err);
+      setStatus({ text: "Could not prepare the review — see console.", kind: "err" });
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      const nameGuess = (mergedForFilename.employee_name || mergedForFilename.contractor_name || "document").replace(
+  async function handleRegenerateDuties() {
+    setBusy(true);
+    try {
+      setStatus({ text: "Regenerating job duties...", kind: "" });
+      const generated = await generateJobDuties((reviewValues || values).position || "");
+      setDuties(generated);
+      setStatus({ text: "Duties regenerated — review before confirming.", kind: "ok" });
+    } catch (err) {
+      console.error(err);
+      setStatus({ text: "Could not regenerate duties — see console.", kind: "err" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateDuty(i, text) {
+    setDuties((d) => d.map((duty, idx) => (idx === i ? text : duty)));
+  }
+
+  function removeDuty(i) {
+    // Never let it go to zero -- generateContractDocx leaves the {{job_duty_1}}
+    // marker untouched when duties is empty, which would leak a literal
+    // placeholder into the document.
+    setDuties((d) => (d.length <= 1 ? d : d.filter((_, idx) => idx !== i)));
+  }
+
+  function addDuty() {
+    setDuties((d) => (d.length >= 5 ? d : [...d, ""]));
+  }
+
+  async function handleBackToForm() {
+    // Returning from a chained NDA review -- restore the original document's
+    // own tokens so the form renders correctly again (values themselves were
+    // never touched by chaining, only tokens/reviewValues/duties were).
+    if (reviewDocKey !== docKey) {
+      const originalTokens = await extractTokens(DOC_TYPES[docKey].shellUrl);
+      setTokens(originalTokens);
+      setReviewDocKey(docKey);
+    }
+    setPhase("form");
+    setStatus({ text: "", kind: "" });
+  }
+
+  // Employment Contract -> matching NDA, straight from values already in
+  // state. No re-upload, no re-extraction, no required-field gate (a blank
+  // birth_date is expected and shouldn't block, same as the plain NDA flow).
+  // Still runs smartFormatValues for consistent capitalization/date formatting,
+  // and still lands on the same review panel before anything is written.
+  async function handleChainNda() {
+    setBusy(true);
+    try {
+      setStatus({ text: "Preparing the matching NDA...", kind: "" });
+      const ndaTokens = await extractTokens(DOC_TYPES.nda.shellUrl);
+      const mapped = {};
+      ndaTokens.forEach((tok) => {
+        mapped[tok] =
+          tok === "today_date" ? todayStr() : NDA_CHAINED_FIELDS.includes(tok) ? reviewValues[tok] || "" : "";
+      });
+      const formatted = await smartFormatValues(mapped);
+      setTokens(ndaTokens);
+      setDuties([]);
+      setReviewValues({ ...mapped, ...formatted });
+      setReviewDocKey("nda");
+      setStatus({ text: "Review the matching NDA below, then confirm to write it.", kind: "ok" });
+    } catch (err) {
+      console.error(err);
+      setStatus({ text: "Could not prepare the NDA — see console.", kind: "err" });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Phase 2: build the .docx from the reviewed/edited duties and values --
+  // no fresh Claude call, so hand edits made during review survive as-is.
+  async function handleConfirmDownload() {
+    setBusy(true);
+    try {
+      setStatus({ text: "Writing document...", kind: "" });
+      const blob = t.hasJobDuties
+        ? await generateContractDocx(
+            t.shellUrl,
+            tokens,
+            reviewValues,
+            duties,
+            t.dutyMarker || "job_duty_1",
+            t.hasPaymentVariant ? paymentType : null
+          )
+        : await generateDocx(t.shellUrl, tokens, reviewValues);
+
+      const nameGuess = (reviewValues.employee_name || reviewValues.contractor_name || "document").replace(
         /\s+/g,
         "_"
       );
       const filename = `${nameGuess}_${t.filenamePrefix}.docx`;
       downloadBlob(blob, filename);
       setStatus({ text: `Downloaded ${filename}`, kind: "ok" });
+      if (docKey === "contract" && reviewDocKey === "contract") setContractDownloaded(true);
     } catch (err) {
       console.error(err);
       setStatus({ text: "Generation failed — see console.", kind: "err" });
@@ -213,183 +339,254 @@ export default function DocForm({ docKey }) {
       <h1>{t.label}</h1>
       <p className="lede">{visibleTokens.length} fields detected in this shell.</p>
 
-      {t.sourceUpload && (
-        <div className="idcard">
-          <div className="ico">{t.sourceUpload.kind === "contract" ? "📄" : "🪪"}</div>
-          <div className="txt">
-            <b>{t.sourceUpload.label}</b>
-            <span>{t.sourceUpload.hint}</span>
-          </div>
-          <input type="file" id="sourceFile" accept=".pdf,.docx,image/*" onChange={handleSourceUpload} />
-          <button className="btn-outline" onClick={() => document.getElementById("sourceFile").click()}>
-            Upload
-          </button>
-        </div>
-      )}
-
-      {otherTokens.map((tok) => {
-        if (tok === "salary_amount") {
-          return (
-            <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
-              <label>
-                Salary (EUR) <span className="required-mark">*</span>
-              </label>
-              <input
-                type="text"
-                value={(values.salary_amount || "").replace("€", "")}
-                placeholder="e.g. 3000"
-                onChange={(e) => handleAmountChange("salary_amount", "salary_words", e.target.value)}
-              />
-            </div>
-          );
-        }
-        if (tok === "salary_words") {
-          return (
-            <div className="field" key={tok}>
-              <label>Salary in words (auto)</label>
-              <input
-                type="text"
-                value={values.salary_words || ""}
-                placeholder="filled in automatically from the amount above"
-                onChange={(e) => setField("salary_words", e.target.value)}
-              />
-            </div>
-          );
-        }
-        return (
-          <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
-            <label>
-              {labelize(tok)} <span className="required-mark">*</span>
-            </label>
-            <input
-              type="text"
-              value={values[tok] || ""}
-              placeholder={labelize(tok)}
-              onChange={(e) => setField(tok, e.target.value)}
-            />
-          </div>
-        );
-      })}
-
-      {t.hasPaymentVariant && (
+      {phase === "form" && (
         <>
-          <div className="field">
-            <label>Payment type</label>
-            <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)}>
-              <option value="project">Project-based</option>
-              <option value="monthlyOnly">Monthly</option>
-              <option value="hourly">Hourly</option>
-              <option value="monthly">Monthly + Hourly</option>
-            </select>
-          </div>
+          {t.sourceUpload && (
+            <div className="idcard">
+              <div className="ico">{t.sourceUpload.kind === "contract" ? "📄" : "🪪"}</div>
+              <div className="txt">
+                <b>{t.sourceUpload.label}</b>
+                <span>{t.sourceUpload.hint}</span>
+              </div>
+              <input type="file" id="sourceFile" accept=".pdf,.docx,image/*" onChange={handleSourceUpload} />
+              <button className="btn-outline" onClick={() => document.getElementById("sourceFile").click()}>
+                Upload
+              </button>
+            </div>
+          )}
 
-          {paymentType === "project" && (
-            <>
-              <div className={`field${invalidFields.includes("fee_amount") ? " invalid" : ""}`}>
+          {otherTokens.map((tok) => {
+            if (tok === "salary_amount") {
+              return (
+                <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
+                  <label>
+                    Salary (EUR) <span className="required-mark">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={(values.salary_amount || "").replace("€", "")}
+                    placeholder="e.g. 3000"
+                    onChange={(e) => handleAmountChange("salary_amount", "salary_words", e.target.value)}
+                  />
+                </div>
+              );
+            }
+            if (tok === "salary_words") {
+              return (
+                <div className="field" key={tok}>
+                  <label>Salary in words (auto)</label>
+                  <input
+                    type="text"
+                    value={values.salary_words || ""}
+                    placeholder="filled in automatically from the amount above"
+                    onChange={(e) => setField("salary_words", e.target.value)}
+                  />
+                </div>
+              );
+            }
+            return (
+              <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
                 <label>
-                  Fee (EUR) <span className="required-mark">*</span>
+                  {labelize(tok)} <span className="required-mark">*</span>
                 </label>
                 <input
                   type="text"
-                  value={(values.fee_amount || "").replace("€", "")}
-                  placeholder="e.g. 3000"
-                  onChange={(e) => handleAmountChange("fee_amount", "fee_words", e.target.value)}
+                  value={values[tok] || ""}
+                  placeholder={labelize(tok)}
+                  onChange={(e) => setField(tok, e.target.value)}
                 />
               </div>
+            );
+          })}
+
+          {t.hasPaymentVariant && (
+            <>
               <div className="field">
-                <label>Fee in words (auto)</label>
-                <input
-                  type="text"
-                  value={values.fee_words || ""}
-                  placeholder="filled in automatically from the amount above"
-                  onChange={(e) => setField("fee_words", e.target.value)}
-                />
+                <label>Payment type</label>
+                <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)}>
+                  <option value="project">Project-based</option>
+                  <option value="monthlyOnly">Monthly</option>
+                  <option value="hourly">Hourly</option>
+                  <option value="monthly">Monthly + Hourly</option>
+                </select>
               </div>
+
+              {paymentType === "project" && (
+                <>
+                  <div className={`field${invalidFields.includes("fee_amount") ? " invalid" : ""}`}>
+                    <label>
+                      Fee (EUR) <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={(values.fee_amount || "").replace("€", "")}
+                      placeholder="e.g. 3000"
+                      onChange={(e) => handleAmountChange("fee_amount", "fee_words", e.target.value)}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Fee in words (auto)</label>
+                    <input
+                      type="text"
+                      value={values.fee_words || ""}
+                      placeholder="filled in automatically from the amount above"
+                      onChange={(e) => setField("fee_words", e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+
+              {(paymentType === "monthlyOnly" || paymentType === "monthly") && (
+                <div className={`field${invalidFields.includes("monthly_fee") ? " invalid" : ""}`}>
+                  <label>
+                    Monthly fee (EUR) <span className="required-mark">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={values.monthly_fee || ""}
+                    placeholder="e.g. 500€"
+                    onChange={(e) => setField("monthly_fee", e.target.value)}
+                  />
+                </div>
+              )}
+
+              {(paymentType === "hourly" || paymentType === "monthly") && (
+                <div className={`field${invalidFields.includes("hourly_rate") ? " invalid" : ""}`}>
+                  <label>
+                    Hourly rate (EUR) <span className="required-mark">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={values.hourly_rate || ""}
+                    placeholder="e.g. 15€"
+                    onChange={(e) => setField("hourly_rate", e.target.value)}
+                  />
+                </div>
+              )}
             </>
           )}
 
-          {(paymentType === "monthlyOnly" || paymentType === "monthly") && (
-            <div className={`field${invalidFields.includes("monthly_fee") ? " invalid" : ""}`}>
-              <label>
-                Monthly fee (EUR) <span className="required-mark">*</span>
-              </label>
-              <input
-                type="text"
-                value={values.monthly_fee || ""}
-                placeholder="e.g. 500€"
-                onChange={(e) => setField("monthly_fee", e.target.value)}
-              />
+          {t.hasDuration && (
+            <div className="field">
+              <label>Contract duration</label>
+              <select value={durationMonths} onChange={(e) => setDurationMonths(Number(e.target.value))}>
+                <option value={6}>6 months</option>
+                <option value={12}>1 year (default)</option>
+                <option value={18}>18 months</option>
+                <option value={24}>2 years</option>
+              </select>
             </div>
           )}
 
-          {(paymentType === "hourly" || paymentType === "monthly") && (
-            <div className={`field${invalidFields.includes("hourly_rate") ? " invalid" : ""}`}>
-              <label>
-                Hourly rate (EUR) <span className="required-mark">*</span>
-              </label>
-              <input
-                type="text"
-                value={values.hourly_rate || ""}
-                placeholder="e.g. 15€"
-                onChange={(e) => setField("hourly_rate", e.target.value)}
-              />
-            </div>
+          <div className="row2">
+            {dateTokens.map((tok) => (
+              <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
+                <label>
+                  {labelize(tok)}
+                  {tok === "today_date" ? " (auto)" : ""}
+                  {tok === "contract_date" && docKey === "contract" ? " (auto)" : ""}
+                  {tok === "contract_date" && docKey === "nda" ? " (from uploaded contract)" : ""}{" "}
+                  <span className="required-mark">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={values[tok] || ""}
+                  placeholder="dd.mm.yyyy"
+                  onChange={(e) => setField(tok, e.target.value)}
+                />
+              </div>
+            ))}
+          </div>
+
+          {t.hasDuration && values.start_date && (
+            <p className="lede" style={{ marginTop: -8 }}>
+              End date: <strong>{values.end_date}</strong> &middot; Probation:{" "}
+              <strong>{values.probation_start_date}</strong> to <strong>{values.probation_end_date}</strong> (3 months,
+              auto)
+            </p>
+          )}
+
+          {t.hasJobDuties && (
+            <p className="lede" style={{ marginTop: -8 }}>
+              Job duties (Neni 3) will be written automatically in Albanian based on the position above — no need to
+              list them by hand.
+            </p>
           )}
         </>
       )}
 
-      {t.hasDuration && (
-        <div className="field">
-          <label>Contract duration</label>
-          <select value={durationMonths} onChange={(e) => setDurationMonths(Number(e.target.value))}>
-            <option value={6}>6 months</option>
-            <option value={12}>1 year (default)</option>
-            <option value={18}>18 months</option>
-            <option value={24}>2 years</option>
-          </select>
-        </div>
-      )}
+      {phase === "review" && (
+        <>
+          {t.hasJobDuties && (
+            <div className="review-section">
+              <div className="review-section-title mono">JOB DUTIES (NENI 3)</div>
+              {duties.map((duty, i) => (
+                <div className="duty-row" key={i}>
+                  <input type="text" value={duty} onChange={(e) => updateDuty(i, e.target.value)} />
+                  <button
+                    className="btn-outline duty-remove"
+                    onClick={() => removeDuty(i)}
+                    disabled={busy || duties.length <= 1}
+                    title="Remove this duty"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+              <div className="duty-actions">
+                <button className="btn-outline" onClick={addDuty} disabled={busy || duties.length >= 5}>
+                  + Add duty
+                </button>
+                <button className="btn-outline" onClick={handleRegenerateDuties} disabled={busy}>
+                  Regenerate duties
+                </button>
+              </div>
+            </div>
+          )}
 
-      <div className="row2">
-        {dateTokens.map((tok) => (
-          <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
-            <label>
-              {labelize(tok)}
-              {tok === "today_date" ? " (auto)" : ""}
-              {tok === "contract_date" && docKey === "contract" ? " (auto)" : ""}
-              {tok === "contract_date" && docKey === "nda" ? " (from uploaded contract)" : ""}{" "}
-              <span className="required-mark">*</span>
-            </label>
-            <input
-              type="text"
-              value={values[tok] || ""}
-              placeholder="dd.mm.yyyy"
-              onChange={(e) => setField(tok, e.target.value)}
-            />
+          <div className="review-section">
+            <div className="review-section-title mono">FIELD SUMMARY</div>
+            <div className="summary">
+              {summaryTokens.map((tok) => (
+                <div className="summary-row" key={tok}>
+                  <span className="summary-label">{fieldDisplayName(tok)}</span>
+                  <span className="summary-value">{(reviewValues && reviewValues[tok]) || "—"}</span>
+                </div>
+              ))}
+            </div>
           </div>
-        ))}
-      </div>
-
-      {t.hasDuration && values.start_date && (
-        <p className="lede" style={{ marginTop: -8 }}>
-          End date: <strong>{values.end_date}</strong> &middot; Probation:{" "}
-          <strong>{values.probation_start_date}</strong> to <strong>{values.probation_end_date}</strong> (3 months, auto)
-        </p>
-      )}
-
-      {t.hasJobDuties && (
-        <p className="lede" style={{ marginTop: -8 }}>
-          Job duties (Neni 3) will be written automatically in Albanian based on the position above —
-          no need to list them by hand.
-        </p>
+        </>
       )}
 
       <div className="generate-bar">
-        <button className="btn-solid" disabled={busy} onClick={handleGenerate}>
-          Generate document
-        </button>
+        {phase === "form" ? (
+          <button className="btn-solid" disabled={busy} onClick={handlePrepareReview}>
+            Review document
+          </button>
+        ) : (
+          <>
+            <button className="btn-outline" disabled={busy} onClick={handleBackToForm}>
+              &larr; Back to form
+            </button>
+            <button className="btn-solid" disabled={busy} onClick={handleConfirmDownload}>
+              Confirm &amp; download
+            </button>
+          </>
+        )}
         <span className={`status mono ${status.kind}`}>{status.text}</span>
       </div>
+
+      {docKey === "contract" && phase === "review" && reviewDocKey === "contract" && contractDownloaded && (
+        <div className="chain-offer">
+          <span>
+            Contract generated. Also generate the matching NDA for{" "}
+            <strong>{reviewValues && reviewValues.employee_name}</strong>?
+          </span>
+          <button className="btn-outline" onClick={handleChainNda} disabled={busy}>
+            Generate NDA
+          </button>
+        </div>
+      )}
     </>
   );
 }
