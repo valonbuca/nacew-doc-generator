@@ -4,7 +4,7 @@ import {
   labelize,
   isDateField,
   todayStr,
-  addToDate,
+  endDateInclusive,
   numberToAlbanianWords,
   extractTokens,
   generateDocx,
@@ -27,7 +27,15 @@ const AUTO_DERIVED_CONTRACT_FIELDS = ["end_date", "probation_start_date", "proba
 
 // Service contract's payment fields -- rendered manually below based on the
 // selected payment type instead of through the generic token loop.
-const PAYMENT_VARIANT_TOKENS = ["fee_amount", "fee_words", "monthly_fee", "hourly_rate"];
+const PAYMENT_VARIANT_TOKENS = ["fee_amount", "fee_words", "monthly_fee", "hourly_rate", "fee_type"];
+
+// Net/gross tokens for the salary/fee amount -- rendered via a dedicated
+// selector rather than the generic token loop, and always defaulted (an
+// empty value would leave the shell's sentence broken, e.g. "pagë mujore ,
+// në shumën prej..."). Casing is fixed per shell: the contract's sentence
+// capitalizes it ("Bruto"/"Neto"), the service contract's doesn't.
+const DEFAULT_SALARY_TYPE = "Bruto";
+const DEFAULT_FEE_TYPE = "bruto";
 
 // Employment Contract -> NDA: both shells were tokenized with identical
 // names for the fields they share, so chaining straight from a generated
@@ -68,26 +76,34 @@ export default function DocForm({ docKey }) {
       setTokens(toks);
       const initial = {};
       toks.forEach((tok) => {
-        initial[tok] = tok === "today_date" || tok === "contract_date" ? todayStr() : "";
+        initial[tok] =
+          tok === "today_date" || tok === "contract_date"
+            ? todayStr()
+            : tok === "salary_type"
+            ? DEFAULT_SALARY_TYPE
+            : tok === "fee_type"
+            ? DEFAULT_FEE_TYPE
+            : "";
       });
       setValues(initial);
     })();
   }, [docKey]);
 
   // Auto-calc end_date from start_date + duration, for the contract type.
+  // A contract ends the day BEFORE the calendar anniversary of its start.
   useEffect(() => {
     if (t.hasDuration && values.start_date) {
-      setValues((v) => ({ ...v, end_date: addToDate(v.start_date, durationMonths) }));
+      setValues((v) => ({ ...v, end_date: endDateInclusive(v.start_date, durationMonths) }));
     }
   }, [values.start_date, durationMonths, t.hasDuration]);
 
-  // Probation is always start_date -> start_date + 3 months, for the contract type.
+  // Probation is always start_date -> start_date + 3 months (inclusive), for the contract type.
   useEffect(() => {
     if (t.hasDuration && values.start_date) {
       setValues((v) => ({
         ...v,
         probation_start_date: v.start_date,
-        probation_end_date: addToDate(v.start_date, 3),
+        probation_end_date: endDateInclusive(v.start_date, 3),
       }));
     }
   }, [values.start_date, t.hasDuration]);
@@ -100,6 +116,7 @@ export default function DocForm({ docKey }) {
     ...(t.hasJobDuties ? [t.dutyMarker || "job_duty_1"] : []),
     ...(t.hasDuration ? AUTO_DERIVED_CONTRACT_FIELDS : []),
     ...(t.hasPaymentVariant ? PAYMENT_VARIANT_TOKENS : []),
+    "salary_type", // rendered next to salary_amount instead, see below
   ];
   const visibleTokens = tokens.filter((tok) => !hiddenTokens.includes(tok));
   const dateTokens = visibleTokens.filter(isDateField);
@@ -135,6 +152,8 @@ export default function DocForm({ docKey }) {
     ...paymentVariantRequired,
     ...(t.hasPaymentVariant && paymentType === "project" ? ["fee_words"] : []),
     ...(t.hasDuration ? AUTO_DERIVED_CONTRACT_FIELDS : []),
+    ...(tokens.includes("salary_type") ? ["salary_type"] : []),
+    ...(tokens.includes("fee_type") ? ["fee_type"] : []),
   ];
 
   function fieldDisplayName(tok) {
@@ -358,16 +377,30 @@ export default function DocForm({ docKey }) {
           {otherTokens.map((tok) => {
             if (tok === "salary_amount") {
               return (
-                <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`} key={tok}>
-                  <label>
-                    Salary (EUR) <span className="required-mark">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={(values.salary_amount || "").replace("€", "")}
-                    placeholder="e.g. 3000"
-                    onChange={(e) => handleAmountChange("salary_amount", "salary_words", e.target.value)}
-                  />
+                <div className="row2" key={tok}>
+                  <div className={`field${invalidFields.includes(tok) ? " invalid" : ""}`}>
+                    <label>
+                      Salary (EUR) <span className="required-mark">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={(values.salary_amount || "").replace("€", "")}
+                      placeholder="e.g. 3000"
+                      onChange={(e) => handleAmountChange("salary_amount", "salary_words", e.target.value)}
+                    />
+                  </div>
+                  {tokens.includes("salary_type") && (
+                    <div className="field">
+                      <label>Salary type</label>
+                      <select
+                        value={values.salary_type || DEFAULT_SALARY_TYPE}
+                        onChange={(e) => setField("salary_type", e.target.value)}
+                      >
+                        <option value="Bruto">Gross (Bruto)</option>
+                        <option value="Neto">Net (Neto)</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -410,6 +443,19 @@ export default function DocForm({ docKey }) {
                   <option value="monthly">Monthly + Hourly</option>
                 </select>
               </div>
+
+              {tokens.includes("fee_type") && (
+                <div className="field">
+                  <label>Fee type</label>
+                  <select
+                    value={values.fee_type || DEFAULT_FEE_TYPE}
+                    onChange={(e) => setField("fee_type", e.target.value)}
+                  >
+                    <option value="bruto">Gross (bruto)</option>
+                    <option value="neto">Net (neto)</option>
+                  </select>
+                </div>
+              )}
 
               {paymentType === "project" && (
                 <>

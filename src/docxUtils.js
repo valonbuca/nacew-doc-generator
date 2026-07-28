@@ -30,8 +30,11 @@ export async function fetchShellZip(shellUrl) {
 // service contract shell). Token detection/replacement below works on the
 // raw XML string, so a split token would otherwise go unmatched. This merges
 // those three runs back into one, using the surrounding run's formatting.
+// The middle run doesn't always carry a <w:rPr> (plain, unformatted runs
+// omit it entirely) -- that group is optional; when absent, the backref
+// \1 simply matches nothing, so the closing run doesn't need one either.
 const SPLIT_TOKEN_RUN_RE =
-  /\{\{<\/w:t><\/w:r><w:proofErr w:type="spellStart"\/><w:r>(<w:rPr>[\s\S]*?<\/w:rPr>)<w:t(?: xml:space="preserve")?>([a-zA-Z0-9_]+)<\/w:t><\/w:r><w:proofErr w:type="spellEnd"\/><w:r>\1<w:t(?: xml:space="preserve")?>\}\}/g;
+  /\{\{<\/w:t><\/w:r><w:proofErr w:type="spellStart"\/><w:r>(<w:rPr>[\s\S]*?<\/w:rPr>)?<w:t(?: xml:space="preserve")?>([a-zA-Z0-9_]+)<\/w:t><\/w:r><w:proofErr w:type="spellEnd"\/><w:r>\1<w:t(?: xml:space="preserve")?>\}\}/g;
 
 function coalesceSplitTokenRuns(xml) {
   return xml.replace(SPLIT_TOKEN_RUN_RE, "{{$2}}");
@@ -151,15 +154,37 @@ export async function generateContractDocx(shellUrl, tokens, values, duties, dut
   });
 }
 
-// Adds `months` calendar months to a dd.mm.yyyy string. Used for the
-// contract's duration selector (defaults to 12 months / 1 year from start_date)
-// and for the probation end date (always 3 months from start_date).
-export function addToDate(dateStr, months) {
-  const [d, m, y] = dateStr.split(".").map(Number);
-  if (!d || !m || !y) return "";
-  const date = new Date(y, m - 1 + months, d);
+function formatDate(date) {
   const p = (n) => String(n).padStart(2, "0");
   return `${p(date.getDate())}.${p(date.getMonth() + 1)}.${date.getFullYear()}`;
+}
+
+// Advances a dd.mm.yyyy string by `months` calendar months, clamping the day
+// to the last valid day of the target month (31 Jan + 1 month -> 28/29 Feb,
+// not an invalid 31 Feb -- JS's Date constructor would otherwise silently
+// roll that overflow into March).
+export function addMonths(dateStr, months) {
+  const [d, m, y] = dateStr.split(".").map(Number);
+  if (!d || !m || !y) return "";
+  const total = m - 1 + months;
+  const targetYear = y + Math.floor(total / 12);
+  const targetMonth = ((total % 12) + 12) % 12;
+  const lastDayOfTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  return formatDate(new Date(targetYear, targetMonth, Math.min(d, lastDayOfTargetMonth)));
+}
+
+// A contract/probation running for `months` months from `startStr` ends the
+// day BEFORE the calendar anniversary, not on it -- 1 Jan 1999 + 1 year ends
+// 31 Dec 1999. Used for the contract's duration selector (defaults to 12
+// months / 1 year from start_date) and for the probation end date (always
+// 3 months from start_date).
+export function endDateInclusive(startStr, months) {
+  const anniversary = addMonths(startStr, months);
+  if (!anniversary) return "";
+  const [d, m, y] = anniversary.split(".").map(Number);
+  const end = new Date(y, m - 1, d);
+  end.setDate(end.getDate() - 1);
+  return formatDate(end);
 }
 
 // Spells out a whole number in Albanian, e.g. 2500 -> "Dy mijë e pesëqind".
