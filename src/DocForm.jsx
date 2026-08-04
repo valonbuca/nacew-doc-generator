@@ -10,13 +10,16 @@ import {
   generateDocx,
   generateContractDocx,
   downloadBlob,
+  compareDates,
 } from "./docxUtils.js";
 import {
-  extractIdCardFromFile,
   extractNdaFieldsFromContract,
   generateJobDuties,
   smartFormatValues,
 } from "./claudeApi.js";
+import { extractIdCardFromFileLocal } from "./idCardOcr.js";
+import { extractNdaFieldsFromContractOffline } from "./offlineExtract.js";
+import { findDutiesForPosition } from "./dutyLibrary.js";
 
 // Fields that exist in the shell but are fully auto-derived, so they never
 // get their own input box:
@@ -50,7 +53,7 @@ const NDA_CHAINED_FIELDS = [
   "contract_date",
 ];
 
-export default function DocForm({ docKey }) {
+export default function DocForm({ docKey, offline }) {
   // Normally mirrors docKey. Diverges only while reviewing a chained NDA
   // generated from a just-downloaded Employment Contract (see
   // handleChainNda) -- everywhere below that reads `t`/`tokens` then
@@ -67,6 +70,8 @@ export default function DocForm({ docKey }) {
   const [invalidFields, setInvalidFields] = useState([]);
   const [phase, setPhase] = useState("form"); // "form" | "review"
   const [duties, setDuties] = useState([]);
+  const [dutySource, setDutySource] = useState(""); // "library" | "claude" | "manual" -- shown in review
+  const [dutyPosition, setDutyPosition] = useState(""); // position `duties` was fetched for, to detect staleness
   const [reviewValues, setReviewValues] = useState(null); // frozen values shown/used at review time
   const [contractDownloaded, setContractDownloaded] = useState(false); // Employment Contract only, offers the NDA chain
 
@@ -191,6 +196,26 @@ export default function DocForm({ docKey }) {
     if (digits) setInvalidFields((inv) => inv.filter((f) => f !== amountKey));
   }
 
+  // Resolves Neni 3's duties for a position with no API call where possible:
+  // the local library first (exact positions we've already written duties
+  // for), then Claude if we're online and the library missed, then blank
+  // rows the user can type into by hand as the last resort -- which is also
+  // what a failed Claude call in "online" mode falls back to.
+  async function getJobDuties(position, isOffline) {
+    const fromLibrary = findDutiesForPosition(position);
+    if (fromLibrary) return { duties: fromLibrary, source: "library" };
+    if (!isOffline) {
+      try {
+        const generated = await generateJobDuties(position || "");
+        return { duties: generated, source: "claude" };
+      } catch (err) {
+        console.error(err);
+        return { duties: [""], source: "manual" };
+      }
+    }
+    return { duties: [""], source: "manual" };
+  }
+
   // One upload widget, driven by DOC_TYPES[key].sourceUpload — reads an ID
   // card (for a new Contract) or an existing contract (for an NDA, since the
   // contract already has every field the NDA needs).
@@ -200,15 +225,58 @@ export default function DocForm({ docKey }) {
     const kind = t.sourceUpload.kind;
     setStatus({ text: kind === "contract" ? "Reading contract..." : "Reading ID card...", kind: "" });
     try {
-      const parsed =
-        kind === "contract"
-          ? await extractNdaFieldsFromContract(file)
-          : await extractIdCardFromFile(file, docKey === "service" ? "contractor_name" : "employee_name");
+      let parsed;
+      let dateNote = "";
+      let modeNote = "";
+      if (kind === "contract") {
+        if (offline) {
+          parsed = await extractNdaFieldsFromContractOffline(file);
+          modeNote = " (read offline)";
+        } else {
+          try {
+            parsed = await extractNdaFieldsFromContract(file);
+          } catch (err) {
+            console.error(err);
+            parsed = await extractNdaFieldsFromContractOffline(file);
+            modeNote = " (Claude unavailable — read offline instead)";
+          }
+        }
+        // The Aneks can't predate the contract it amends. today_date defaults
+        // to today, but if the contract is dated in the future, pull it
+        // forward to match instead of silently generating a backwards-dated
+        // annex (real case: a contract dated 05.08.2026 generated 03.08.2026).
+        if (parsed.contract_date && compareDates(todayStr(), parsed.contract_date) < 0) {
+          parsed.today_date = parsed.contract_date;
+          dateNote = ` Aneks date set to ${parsed.contract_date} to match the contract (today is earlier).`;
+        }
+      } else {
+        // Local MRZ OCR -- no API involved, works identically online or
+        // offline. Returns {} if the check digits on the MRZ strip didn't
+        // validate; the hasAnyValue check below then reports that rather
+        // than risk populating a silently wrong personal number.
+        parsed = await extractIdCardFromFileLocal(file, docKey === "service" ? "contractor_name" : "employee_name");
+      }
+      // Kosovo ID cards never print a street address (only the municipality,
+      // under "Vendbanimi") -- an empty street_address from an ID card is
+      // expected, not a sign the extraction failed, so it's excluded from
+      // this check.
+      const checkableValues = kind === "idcard" ? { ...parsed, street_address: undefined } : parsed;
+      const hasAnyValue = Object.values(checkableValues).some((v) => typeof v === "string" && v.trim());
+      if (!hasAnyValue) {
+        setStatus({
+          text:
+            kind === "idcard"
+              ? "Could not get a reliable read from the MRZ strip on the back of the card — fill in manually."
+              : "Nothing could be extracted from the file — fill in manually.",
+          kind: "err",
+        });
+        return;
+      }
       applyExtractedFields(parsed);
-      setStatus({ text: "Fields filled — please double-check before generating.", kind: "ok" });
+      setStatus({ text: `Fields filled${modeNote} — please double-check before generating.${dateNote}`, kind: "ok" });
     } catch (err) {
       console.error(err);
-      setStatus({ text: "Could not read the file, fill in manually.", kind: "err" });
+      setStatus({ text: err.message || "Could not read the file, fill in manually.", kind: "err" });
     }
   }
 
@@ -227,21 +295,43 @@ export default function DocForm({ docKey }) {
 
     setBusy(true);
     try {
+      let reviewNote = "";
       if (t.hasJobDuties) {
-        setStatus({ text: "Generating job duties for this position...", kind: "" });
-        const generated = await generateJobDuties(values.position || "");
-        setDuties(generated);
+        const position = (values.position || "").trim();
+        // Duties already sitting in state for this same position were typed
+        // or edited by hand in a previous review pass -- those explicitly
+        // supplied duties always win over a fresh library/API lookup.
+        // (A position change invalidates that -- old duties for the wrong
+        // role -- so it still refetches.)
+        const hasExplicitDuties = duties.length > 0 && duties.some((d) => d.trim()) && dutyPosition === position;
+        if (!hasExplicitDuties) {
+          setStatus({ text: "Preparing job duties for this position...", kind: "" });
+          const { duties: resolved, source } = await getJobDuties(position, offline);
+          setDuties(resolved);
+          setDutySource(source);
+          setDutyPosition(position);
+        }
         setReviewValues(values);
       } else {
-        setStatus({ text: "Asking Claude to format the fields...", kind: "" });
-        const formatted = await smartFormatValues(values);
+        let formatted = {};
+        if (offline) {
+          reviewNote = " (offline — values used as typed, no formatting pass)";
+        } else {
+          setStatus({ text: "Asking Claude to format the fields...", kind: "" });
+          try {
+            formatted = await smartFormatValues(values);
+          } catch (err) {
+            console.error(err);
+            reviewNote = " (Claude unavailable — values used as typed)";
+          }
+        }
         setReviewValues({ ...values, ...formatted });
       }
-      setStatus({ text: "Review below, then confirm to write the document.", kind: "ok" });
+      setStatus({ text: `Review below, then confirm to write the document.${reviewNote}`, kind: "ok" });
       setPhase("review");
     } catch (err) {
       console.error(err);
-      setStatus({ text: "Could not prepare the review — see console.", kind: "err" });
+      setStatus({ text: err.message || "Could not prepare the review — see console.", kind: "err" });
     } finally {
       setBusy(false);
     }
@@ -251,12 +341,15 @@ export default function DocForm({ docKey }) {
     setBusy(true);
     try {
       setStatus({ text: "Regenerating job duties...", kind: "" });
-      const generated = await generateJobDuties((reviewValues || values).position || "");
-      setDuties(generated);
+      const position = (reviewValues || values).position || "";
+      const { duties: resolved, source } = await getJobDuties(position, offline);
+      setDuties(resolved);
+      setDutySource(source);
+      setDutyPosition(position.trim());
       setStatus({ text: "Duties regenerated — review before confirming.", kind: "ok" });
     } catch (err) {
       console.error(err);
-      setStatus({ text: "Could not regenerate duties — see console.", kind: "err" });
+      setStatus({ text: err.message || "Could not regenerate duties — see console.", kind: "err" });
     } finally {
       setBusy(false);
     }
@@ -305,15 +398,24 @@ export default function DocForm({ docKey }) {
         mapped[tok] =
           tok === "today_date" ? todayStr() : NDA_CHAINED_FIELDS.includes(tok) ? reviewValues[tok] || "" : "";
       });
-      const formatted = await smartFormatValues(mapped);
+      let formatted = {};
+      let chainNote = offline ? " (offline — values used as typed, no formatting pass)" : "";
+      if (!offline) {
+        try {
+          formatted = await smartFormatValues(mapped);
+        } catch (err) {
+          console.error(err);
+          chainNote = " (Claude unavailable — values used as typed)";
+        }
+      }
       setTokens(ndaTokens);
       setDuties([]);
       setReviewValues({ ...mapped, ...formatted });
       setReviewDocKey("nda");
-      setStatus({ text: "Review the matching NDA below, then confirm to write it.", kind: "ok" });
+      setStatus({ text: `Review the matching NDA below, then confirm to write it.${chainNote}`, kind: "ok" });
     } catch (err) {
       console.error(err);
-      setStatus({ text: "Could not prepare the NDA — see console.", kind: "err" });
+      setStatus({ text: err.message || "Could not prepare the NDA — see console.", kind: "err" });
     } finally {
       setBusy(false);
     }
@@ -565,7 +667,12 @@ export default function DocForm({ docKey }) {
         <>
           {t.hasJobDuties && (
             <div className="review-section">
-              <div className="review-section-title mono">JOB DUTIES (NENI 3)</div>
+              <div className="review-section-title mono">
+                JOB DUTIES (NENI 3)
+                {dutySource === "library" && " — from local duty library"}
+                {dutySource === "claude" && " — written by Claude"}
+                {dutySource === "manual" && " — not in the library, add duties by hand"}
+              </div>
               {duties.map((duty, i) => (
                 <div className="duty-row" key={i}>
                   <input type="text" value={duty} onChange={(e) => updateDuty(i, e.target.value)} />

@@ -4,6 +4,7 @@ import DocForm from "./DocForm.jsx";
 
 export default function App() {
   const [activeKey, setActiveKey] = useState(null);
+  const [offline, setOffline] = useState(false);
 
   return (
     <>
@@ -12,16 +13,30 @@ export default function App() {
           <span className="logo">NACEW</span>
           <span className="logo-sub mono">DOCUMENT GENERATOR</span>
         </button>
-        {activeKey && (
-          <button className="backbtn mono" onClick={() => setActiveKey(null)}>
-            &larr; back
+        <div className="header-right">
+          <button
+            className={`mode-toggle mono${offline ? " is-offline" : ""}`}
+            onClick={() => setOffline((v) => !v)}
+            title={
+              offline
+                ? "Working offline — no Claude calls. Click to go back online."
+                : "Working online — Claude fills in what it can. Click to go offline."
+            }
+          >
+            <span className="dot" />
+            {offline ? "Offline" : "Online"}
           </button>
-        )}
+          {activeKey && (
+            <button className="backbtn mono" onClick={() => setActiveKey(null)}>
+              &larr; back
+            </button>
+          )}
+        </div>
       </header>
 
       <main>
         {activeKey ? (
-          <DocForm docKey={activeKey} />
+          <DocForm docKey={activeKey} offline={offline} />
         ) : (
           <>
             <div className="tag mono">[ NACEW &middot; SHELL LIBRARY ]</div>

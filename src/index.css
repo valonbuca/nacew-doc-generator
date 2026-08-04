@@ -34,8 +34,18 @@ header{
   -webkit-background-clip:text; background-clip:text; color:transparent;
 }
 .logo-sub{font-size:.72rem; color:var(--muted); letter-spacing:.12em; font-weight:400;}
+.header-right{margin-left:auto; display:flex; align-items:center; gap:10px;}
+.mode-toggle{
+  display:flex; align-items:center; gap:7px;
+  background:none; border:1px solid var(--border); color:var(--fg);
+  padding:8px 14px; font-size:.72rem; letter-spacing:.12em; cursor:pointer;
+  text-transform:uppercase; font-weight:500;
+}
+.mode-toggle:hover{border-color:var(--ink);}
+.mode-toggle .dot{width:7px; height:7px; border-radius:50%; background:var(--accent); flex-shrink:0;}
+.mode-toggle.is-offline .dot{background:var(--danger);}
 .backbtn{
-  margin-left:auto; background:none; border:1px solid var(--border); color:var(--fg);
+  background:none; border:1px solid var(--border); color:var(--fg);
   padding:8px 14px; font-size:.72rem; letter-spacing:.12em; cursor:pointer;
   text-transform:uppercase; font-weight:500;
 }

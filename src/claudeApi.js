@@ -22,9 +22,14 @@ async function callClaude(messages) {
     body: JSON.stringify({ model: MODEL, max_tokens: 1500, messages }),
   });
   const data = await res.json();
+  if (!res.ok || data.error) {
+    throw new Error(data.error?.message || `Claude API request failed (HTTP ${res.status}).`);
+  }
   const textBlock = (data.content || []).find((b) => b.type === "text");
-  const clean = (textBlock ? textBlock.text : "{}").replace(/```json|```/g, "").trim();
-  return clean;
+  if (!textBlock) {
+    throw new Error("Claude API response contained no text content.");
+  }
+  return textBlock.text.replace(/```json|```/g, "").trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -91,33 +96,6 @@ async function buildFileContentBlocks(file, { preferText = false } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// ID card reading (Contract flow — building a NEW contract from an ID card).
-// ---------------------------------------------------------------------------
-
-export async function extractIdCardFromFile(file, nameField = "employee_name") {
-  const contentBlocks = await buildFileContentBlocks(file);
-  const clean = await callClaude([
-    {
-      role: "user",
-      content: [
-        ...contentBlocks,
-        {
-          type: "text",
-          text: 'This file contains the front and/or back of a Kosovo ID card (may be a PDF or a Word doc with both sides embedded as images). Extract: full name, birth date, personal number ("Numri Personal" — a 10-digit number found on the BACK of the card, not the document number on the front), municipality, and street address. For street_address, include the full address exactly as printed on the card, INCLUDING its descriptor (Rruga / Bulevardi / Sheshi / etc.), without repeating the municipality. Respond ONLY with raw JSON, no markdown fences: {"employee_name":"","birth_date":"","personal_id":"","municipality":"","street_address":""}. Use empty string for anything not visible or not on the card.',
-        },
-      ],
-    },
-  ]);
-  try {
-    const parsed = JSON.parse(clean);
-    const { employee_name, ...rest } = parsed;
-    return { [nameField]: employee_name, ...rest };
-  } catch {
-    return {};
-  }
-}
-
-// ---------------------------------------------------------------------------
 // NDA fields read straight from an existing employment contract — no manual
 // form-filling needed, the contract already has everything the NDA needs.
 // ---------------------------------------------------------------------------
@@ -146,11 +124,7 @@ Respond ONLY with raw JSON, no markdown fences: {"employee_name":"","birth_date"
       ],
     },
   ]);
-  try {
-    return JSON.parse(clean);
-  } catch {
-    return {};
-  }
+  return JSON.parse(clean);
 }
 
 // ---------------------------------------------------------------------------
@@ -172,12 +146,11 @@ Do NOT include a final catch-all duty like "kryen detyra dhe përgjegjësi të t
 Respond ONLY with a raw JSON array of strings, no markdown fences, no commentary.`;
 
   const clean = await callClaude([{ role: "user", content: prompt }]);
-  try {
-    const arr = JSON.parse(clean);
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
+  const arr = JSON.parse(clean);
+  if (!Array.isArray(arr)) {
+    throw new Error("Claude did not return a list of job duties.");
   }
+  return arr;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,9 +170,5 @@ Input:
 ${JSON.stringify(rawValues)}`;
 
   const clean = await callClaude([{ role: "user", content: prompt }]);
-  try {
-    return JSON.parse(clean);
-  } catch {
-    return rawValues;
-  }
+  return JSON.parse(clean);
 }

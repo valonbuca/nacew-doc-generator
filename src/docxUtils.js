@@ -14,6 +14,34 @@ export function todayStr() {
   return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`;
 }
 
+// Validates a dd.mm.yyyy string against the real calendar (rejects e.g.
+// month 17, or day 30 in February) -- used both to sanity-check dates pulled
+// out of free-text contract parsing and to enforce date-ordering rules.
+// Returns the normalized string, or null if it isn't a real date.
+export function parseValidDate(str) {
+  const m = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(String(str || "").trim());
+  if (!m) return null;
+  const day = Number(m[1]);
+  const month = Number(m[2]);
+  const year = Number(m[3]);
+  if (month < 1 || month > 12) return null;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  if (day < 1 || day > daysInMonth) return null;
+  return `${m[1]}.${m[2]}.${m[3]}`;
+}
+
+// Compares two dd.mm.yyyy strings; negative if a < b, positive if a > b.
+// Returns 0 if either isn't a valid date (callers should validate first if
+// that distinction matters).
+export function compareDates(a, b) {
+  const da = parseValidDate(a);
+  const db = parseValidDate(b);
+  if (!da || !db) return 0;
+  const [d1, m1, y1] = da.split(".").map(Number);
+  const [d2, m2, y2] = db.split(".").map(Number);
+  return new Date(y1, m1 - 1, d1).getTime() - new Date(y2, m2 - 1, d2).getTime();
+}
+
 export function escapeXml(str) {
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -214,10 +242,13 @@ function threeDigitWords(n) {
   return parts.join(" e ");
 }
 
+// Both shell placeholders this feeds ("me shkronja Euro" / "dymijë Euro")
+// include the currency word, so the spelled-out amount must end in " Euro"
+// too -- e.g. "Tre mijë Euro", not just "Tre mijë".
 export function numberToAlbanianWords(num) {
   const n = Math.round(Number(num));
   if (!Number.isFinite(n)) return "";
-  if (n === 0) return "Zero";
+  if (n === 0) return "Zero Euro";
 
   const thousands = Math.floor(n / 1000);
   const rest = n % 1000;
@@ -229,7 +260,7 @@ export function numberToAlbanianWords(num) {
     parts.push(threeDigitWords(rest));
   }
   const words = parts.join(" e ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)} Euro`;
 }
 
 export function downloadBlob(blob, filename) {
