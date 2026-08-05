@@ -17,7 +17,7 @@ import {
   generateJobDuties,
   smartFormatValues,
 } from "./claudeApi.js";
-import { extractIdCardFromFileLocal } from "./idCardOcr.js";
+import { readMrzFromIdCard } from "./idCardOcr.js";
 import { extractNdaFieldsFromContractOffline } from "./offlineExtract.js";
 import { findDutiesForPosition } from "./dutyLibrary.js";
 
@@ -251,25 +251,35 @@ export default function DocForm({ docKey, offline }) {
         }
       } else {
         // Local MRZ OCR -- no API involved, works identically online or
-        // offline. Returns {} if the check digits on the MRZ strip didn't
-        // validate; the hasAnyValue check below then reports that rather
-        // than risk populating a silently wrong personal number.
-        parsed = await extractIdCardFromFileLocal(file, docKey === "service" ? "contractor_name" : "employee_name");
-      }
-      // Kosovo ID cards never print a street address (only the municipality,
-      // under "Vendbanimi") -- an empty street_address from an ID card is
-      // expected, not a sign the extraction failed, so it's excluded from
-      // this check.
-      const checkableValues = kind === "idcard" ? { ...parsed, street_address: undefined } : parsed;
-      const hasAnyValue = Object.values(checkableValues).some((v) => typeof v === "string" && v.trim());
-      if (!hasAnyValue) {
-        setStatus({
-          text:
-            kind === "idcard"
-              ? "Could not get a reliable read from the MRZ strip on the back of the card — fill in manually."
-              : "Nothing could be extracted from the file — fill in manually.",
-          kind: "err",
+        // offline. Brute-forces every extracted image x rotation and lets
+        // the check digits pick the winner (see idCardOcr.js); a failed or
+        // ambiguous read must not populate a silently wrong personal
+        // number, so it's handled here directly with its own message
+        // instead of falling through to the generic check below.
+        const mrzResult = await readMrzFromIdCard(file, {
+          onProgress: (text) => setStatus({ text, kind: "" }),
         });
+        if (!mrzResult.reliable) {
+          const noteSuffix = mrzResult.notes?.length ? ` (${mrzResult.notes.join(" ")})` : "";
+          setStatus({
+            text: `Couldn't read the ID card's machine-readable strip. Enter the fields manually, or make sure the photo shows the BACK of the card, flat and in focus.${noteSuffix}`,
+            kind: "err",
+          });
+          return;
+        }
+        // municipality/street_address are deliberately absent here:
+        // municipality is only printed on the card face (never in the MRZ)
+        // and Kosovo ID cards never print a street address at all -- both
+        // stay whatever the user already typed, not treated as a failure.
+        parsed = {
+          [docKey === "service" ? "contractor_name" : "employee_name"]: mrzResult.name,
+          birth_date: mrzResult.birth_date,
+          personal_id: mrzResult.personal_id,
+        };
+      }
+      const hasAnyValue = Object.values(parsed).some((v) => typeof v === "string" && v.trim());
+      if (!hasAnyValue) {
+        setStatus({ text: "Nothing could be extracted from the file — fill in manually.", kind: "err" });
         return;
       }
       applyExtractedFields(parsed);
